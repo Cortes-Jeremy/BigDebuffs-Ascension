@@ -1,0 +1,8 @@
+## Interface: 30300
+## LoadOnDemand: 0
+## Title: CooldownTemplate
+## Author: RomanSpector & Atom, JC
+## Version: 2.0
+## OptionalDeps: OmniCC
+
+CooldownTemplate.xml
