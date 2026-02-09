@@ -1770,7 +1770,7 @@ function BigDebuffs:ShowBigDebuffs(frame)
                 frame.BigDebuffs[index].baseSize = frame:GetHeight() * debuffs[i][2] * 0.01
                 frame.BigDebuffs[index].spellId = debuffs[i][5]
                 CompactUnitFrame_UtilSetDebuff(frame.BigDebuffs[index], frame.displayedUnit, debuffs[i][1], nil, false, false)
-                frame.BigDebuffs[index].cooldown:SetSwipeColor(0, 0, 0, 0.7)
+                -- frame.BigDebuffs[index].cooldown:SetSwipeColor(0, 0, 0, 0.7) -- still regular cooldown
                 index = index + 1
             end
         end
