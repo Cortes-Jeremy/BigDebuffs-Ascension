@@ -27,6 +27,9 @@ local C_CharacterAdvancement = C_CharacterAdvancement
 local UnitDebuff, UnitBuff = C_UnitDebuff, C_UnitBuff
 local InterfaceOptionsFrame_OpenToCategory = InterfaceOptionsFrame_OpenToCategory
 
+-- Constants (exported to BigDebuffs namespace for access from other files)
+BigDebuffs.MAX_NAMEPLATE_ICONS = 5 -- Maximum number of icons that can be displayed on nameplates (must match options max value)
+
 -- Defaults
 local defaults = {
     profile = {
@@ -148,6 +151,9 @@ local defaults = {
             cooldownFontSize = 16,
             cooldownFontEffect = "OUTLINE",
             cooldownFont = "Friz Quadrata TT",
+            maxIcons = 1,
+            iconSpacing = 2,
+            useRaidFrameSize = false,
             tooltips = true,
             enemy = true,
             friendly = true,
@@ -807,17 +813,26 @@ function BigDebuffs:Refresh()
         frame.cooldown.noCooldownCount = not self.db.profile.unitFrames.cooldownCount
         self:UpdateUnitFrame(unit)
     end
-    for unit, frame in pairs(self.Nameplates) do
-        frame:Hide()
-        frame.current = nil
-        if self.db.profile.unitFrames.cooldownCount then
-            local text = frame.cooldown.TimerText.text
-            if text then
-                text:SetFont(LibSharedMedia:Fetch("font", self.db.profile.nameplates.cooldownFont), self.db.profile.nameplates.cooldownFontSize, self.db.profile.nameplates.cooldownFontEffect)
+    for unit, frames in pairs(self.Nameplates) do
+        for i = 1, #frames do
+            frames[i]:Hide()
+            frames[i].current = nil
+            if self.db.profile.nameplates.cooldownCount then
+                local text = frames[i].cooldown.TimerText.text
+                if text then
+                    text:SetFont(LibSharedMedia:Fetch("font", self.db.profile.nameplates.cooldownFont), self.db.profile.nameplates.cooldownFontSize, self.db.profile.nameplates.cooldownFontEffect)
+                end
             end
+            frames[i].cooldown:SetHideCountdownNumbers(not (OmniCC == nil and self.db.profile.nameplates.cooldownCount))
+            frames[i].cooldown.noCooldownCount = not self.db.profile.nameplates.cooldownCount
         end
-        frame.cooldown:SetHideCountdownNumbers(not (OmniCC == nil and self.db.profile.nameplates.cooldownCount))
-        frame.cooldown.noCooldownCount = not self.db.profile.nameplates.cooldownCount
+
+        -- Reposition icons when settings change (spacing, size, maxIcons, etc)
+        if frames[1] and frames[1].anchor then
+            local maxIcons = self.db.profile.nameplates.maxIcons or 1
+            self:RepositionNameplateIcons(frames, frames[1].anchor, unit, maxIcons, maxIcons)
+        end
+
         self:UpdateNameplate(unit)
     end
 end
@@ -991,22 +1006,28 @@ function BigDebuffs:AttachUnitFrame(unit)
 end
 
 function BigDebuffs:AttachNameplate(unit)
-    local frame = self.Nameplates[unit]
-    if not frame then return end
+    local frames = self.Nameplates[unit]
+    if not frames then return end
 
     local config = self.db.profile.nameplates
+    local frameList = frames
 
-    if config.cooldownCount then
-        local text = frame.cooldown.TimerText.text
-        if text then
-            text:SetFont(LibSharedMedia:Fetch("font", config.cooldownFont), config.cooldownFontSize, config.cooldownFontEffect)
+    for _, frame in ipairs(frameList) do
+        if config.cooldownCount then
+            local text = frame.cooldown.TimerText.text
+            if text then
+                text:SetFont(LibSharedMedia:Fetch("font", config.cooldownFont), config.cooldownFontSize, config.cooldownFontEffect)
+            end
         end
+
+        frame.cooldown:SetHideCountdownNumbers(not (OmniCC == nil and config.cooldownCount))
+        frame.cooldown.noCooldownCount = not config.cooldownCount
+
+        frame:EnableMouse(config.tooltips)
     end
 
-    frame.cooldown:SetHideCountdownNumbers(not (OmniCC == nil and config.cooldownCount))
-    frame.cooldown.noCooldownCount = not config.cooldownCount
-
-    frame:EnableMouse(config.tooltips)
+    local frame = frameList[1]
+    if not frame or not frame.anchor then return end
 
     local anchorStyle = "enemyAnchor"
     if (not UnitCanAttack("player", unit) and config["friendlyAnchor"].friendlyAnchorEnabled == true) then
@@ -1030,11 +1051,15 @@ function BigDebuffs:AttachNameplate(unit)
     if Masque ~= nil then
         local msqdb = BigDebuffs.MasqueGroup.NamePlate.db
         if msqdb and not msqdb.Disabled then
-            BigDebuffs.MasqueGroup.NamePlate:AddButton(frame)
-            -- No idea why I need to re-skin, but this fixes the size...
-            BigDebuffs.MasqueGroup.NamePlate:ReSkin(frame.Icon)
+            for _, frame in ipairs(frameList) do
+                BigDebuffs.MasqueGroup.NamePlate:AddButton(frame)
+                -- No idea why I need to re-skin, but this fixes the size...
+                BigDebuffs.MasqueGroup.NamePlate:ReSkin(frame.Icon)
+            end
         else
-            RestoreIconLayout(frame)
+            for _, frame in ipairs(frameList) do
+                RestoreIconLayout(frame)
+            end
         end
     end
 
@@ -1412,6 +1437,35 @@ function BigDebuffs:GetNameplatesPriority(id)
     end
 
     return self.db.profile.priority[self.Spells[id].type] or 0
+end
+
+-- Get nameplate icon size (with raid frame size support)
+function BigDebuffs:GetNameplateIconSize(id, baseSize)
+    if not self.db.profile.nameplates.useRaidFrameSize then
+        return baseSize
+    end
+
+    if not self.Spells[id] then return baseSize end
+    id = self.Spells[id].parent or id
+
+    local category = self.Spells[id].type
+    if not category or not self.db.profile.raidFrames[category] then return baseSize end
+
+    -- Base size corresponds to 50% in the raid frame system
+    local BASE_PERCENTAGE = 50
+
+    -- Check for user custom size
+    if self.db.profile.spells[id] and self.db.profile.spells[id].size then
+        return baseSize * (self.db.profile.spells[id].size / BASE_PERCENTAGE)
+    end
+
+    -- Use category size percentage (relative to 50% baseline)
+    local sizePercent = self.db.profile.raidFrames[category]
+    if sizePercent and sizePercent > 0 then
+        return baseSize * (sizePercent / BASE_PERCENTAGE)
+    end
+
+    return baseSize
 end
 
 --classic and BigDebuffs:ShowBigDebuffs()
@@ -1906,13 +1960,13 @@ function BigDebuffs:UpdateNameplate(unit)
     if not self.db.profile.nameplates.enabled then return end
     self:AttachNameplate(unit)
 
-    local frame = self.Nameplates[unit]
-    if not frame then return end
+    local frames = self.Nameplates[unit]
+    if not frames then return end
 
     local UnitDebuff = BigDebuffs.test and UnitDebuffTest or UnitDebuff
 
     local now = GetTime()
-    local left, priority, duration, expires, icon, debuff, buff, interrupt = 0, 0
+    local auras = {} -- Store all eligible auras with their data
 
     for i = 1, 40 do
         -- Check debuffs
@@ -1923,15 +1977,20 @@ function BigDebuffs:UpdateNameplate(unit)
                 local reaction = caster and UnitReaction("player", caster) or 0
                 local friendlySmokeBomb = id == 2304501 and reaction > 4
                 local p = self:GetNameplatesPriority(id)
-                if p and p >= priority and not friendlySmokeBomb then
-                    if p > priority or self:IsPriorityBigDebuff(id) or e == 0 or e - now > left then
-                        left = e - now
-                        duration = d
-                        debuff = i
-                        priority = p
-                        expires = e
-                        icon = n
-                    end
+                if p and not friendlySmokeBomb then
+                    local left = e - now
+                    table.insert(auras, {
+                        priority = p,
+                        duration = d,
+                        expires = e,
+                        icon = n,
+                        index = i,
+                        buff = false,
+                        interrupt = false,
+                        left = left,
+                        spellId = id,
+                        isPriority = self:IsPriorityBigDebuff(id)
+                    })
                 end
             end
         end
@@ -1942,16 +2001,20 @@ function BigDebuffs:UpdateNameplate(unit)
         if id then
             if self.Spells[id] then
                 local p = self:GetNameplatesPriority(id)
-                if p and p >= priority then
-                    if p > priority or self:IsPriorityBigDebuff(id) or e == 0 or e - now > left then
-                        left = e - now
-                        duration = d
-                        debuff = i
-                        priority = p
-                        expires = e
-                        icon = n
-                        buff = true
-                    end
+                if p then
+                    local left = e - now
+                    table.insert(auras, {
+                        priority = p,
+                        duration = d,
+                        expires = e,
+                        icon = n,
+                        index = i,
+                        buff = true,
+                        interrupt = false,
+                        left = left,
+                        spellId = id,
+                        isPriority = self:IsPriorityBigDebuff(id)
+                    })
                 end
             end
         end
@@ -1963,47 +2026,116 @@ function BigDebuffs:UpdateNameplate(unit)
         local spell = self.units[guid]
         local spellId = spell.spellId
         local p = self:GetNameplatesPriority(spellId)
-        if p and p >= priority then
-            left = spell.expires - now
-            duration = self.Spells[spellId].duration
-            debuff = spellId
-            expires = spell.expires
-            icon = GetSpellTexture(spellId)
-            interrupt = spellId
+        if p then
+            local left = spell.expires - now
+            table.insert(auras, {
+                priority = p,
+                duration = self.Spells[spellId].duration,
+                expires = spell.expires,
+                icon = GetSpellTexture(spellId),
+                index = spellId,
+                buff = false,
+                interrupt = spellId,
+                left = left,
+                spellId = spellId,
+                isPriority = self:IsPriorityBigDebuff(spellId)
+            })
         end
     end
 
-
-    if debuff then
-        if duration < 1 then duration = 1 end -- auras like Solar Beam don't have a duration
-
-        if frame.current ~= icon then
-            frame.icon:SetTexture(icon)
+    -- Sort by priority > isPriority > duration remaining
+    table.sort(auras, function(a, b)
+        if a.priority ~= b.priority then
+            return a.priority > b.priority
         end
+        if a.isPriority ~= b.isPriority then
+            return a.isPriority
+        end
+        if a.expires == 0 or b.expires == 0 then
+            return a.expires > b.expires
+        end
+        return a.left > b.left
+    end)
 
-        frame.cooldown:SetCooldown(expires - duration, duration)
-        frame:Show()
-        frame.cooldown:SetSwipeColor(0, 0, 0, 0.6)
+    local config = self.db.profile.nameplates
+    local maxIcons = math.min(config.maxIcons, #frames)
 
-        -- set for tooltips
-        frame:SetID(debuff)
-        frame.buff = buff
-        frame.interrupt = interrupt
-        frame.current = icon
-    else
-        frame:Hide()
-        frame.current = nil
+    -- Determine anchor style for base size
+    local anchorStyle = "enemyAnchor"
+    if (not UnitCanAttack("player", unit) and config.friendlyAnchor.friendlyAnchorEnabled == true) then
+        anchorStyle = "friendlyAnchor"
+    end
+    local baseSize = config[anchorStyle].size
+
+    -- Count how many icons will actually be visible
+    local visibleCount = math.min(#auras, maxIcons)
+
+    -- Pre-calculate icon sizes for accurate centering (when using dynamic sizing)
+    local iconSizes = {}
+    for i = 1, visibleCount do
+        local aura = auras[i]
+        if aura then
+            iconSizes[i] = self:GetNameplateIconSize(aura.spellId, baseSize)
+        else
+            iconSizes[i] = baseSize
+        end
     end
 
-    --Hide/Disable auras which shouldn't be shown. Seems to fix false icons from appearing and getting stuck.
-    if frame.current ~= nil and (not unit:find("nameplate")
+    -- Reposition icons with dynamic centering based on visible count and actual sizes
+    if visibleCount > 0 and frames[1] and frames[1].anchor then
+        self:RepositionNameplateIcons(frames, frames[1].anchor, unit, visibleCount, maxIcons, iconSizes)
+    end
+
+    -- Update visible icons
+    for i = 1, maxIcons do
+        local frame = frames[i]
+        local aura = auras[i]
+
+        if aura then
+            local duration = aura.duration
+            if duration < 1 then duration = 1 end -- auras like Solar Beam don't have a duration
+
+            if frame.current ~= aura.icon then
+                frame.icon:SetTexture(aura.icon)
+            end
+
+            -- Icon size was already calculated and applied by RepositionNameplateIcons
+            -- But we set it again to ensure consistency
+            local iconSize = iconSizes[i] or baseSize
+            frame:SetSize(iconSize, iconSize)
+
+            frame.cooldown:SetCooldown(aura.expires - duration, duration)
+            frame:Show()
+            frame.cooldown:SetSwipeColor(0, 0, 0, 0.6)
+
+            -- set for tooltips
+            frame:SetID(aura.index)
+            frame.buff = aura.buff
+            frame.interrupt = aura.interrupt
+            frame.current = aura.icon
+        else
+            frame:Hide()
+            frame.current = nil
+        end
+    end
+
+    -- Hide extra frames
+    for i = maxIcons + 1, #frames do
+        frames[i]:Hide()
+        frames[i].current = nil
+    end
+
+    --Hide/Disable auras which shouldn't be shown
+    if (not unit:find("nameplate")
         or (not UnitCanAttack("player", unit) and not self.db.profile.nameplates.friendly)
         or (UnitCanAttack("player", unit) and not self.db.profile.nameplates.enemy)
         or (not UnitIsPlayer(unit) and not self.db.profile.nameplates.npc)
         or (UnitIsUnit("player", unit)))
     then
-        frame:Hide()
-        frame.current = nil
+        for i = 1, #frames do
+            frames[i]:Hide()
+            frames[i].current = nil
+        end
     end
 end
 
@@ -2017,6 +2149,84 @@ end
 
 function BigDebuffs:UNIT_PET()
     self:UpdateUnitFrame("pet")
+end
+
+-- Reposition nameplate icons (called when spacing/size changes or on creation)
+-- visibleCount: number of icons that are actually visible (for centering)
+-- maxIcons: maximum number of icon frames to show/position (from config)
+-- iconSizes: optional table of actual icon sizes for each visible icon (for accurate centering with dynamic sizes)
+function BigDebuffs:RepositionNameplateIcons(frames, anchor, unit, visibleCount, maxIcons, iconSizes)
+    if not frames or #frames == 0 then return end
+
+    local config = self.db.profile.nameplates
+
+    -- Determine anchor style
+    local anchorStyle = "enemyAnchor"
+    if unit and not UnitCanAttack("player", unit) and config.friendlyAnchor.friendlyAnchorEnabled then
+        anchorStyle = "friendlyAnchor"
+    end
+
+    local anchorConfig = config[anchorStyle]
+    local baseSize = anchorConfig.size
+    local spacing = config.iconSpacing
+
+    -- Use visibleCount for centering, but position all available frames up to MAX_NAMEPLATE_ICONS
+    local countForCentering = visibleCount or maxIcons
+    local framesToPosition = math.min(BigDebuffs.MAX_NAMEPLATE_ICONS, #frames)
+
+    -- Calculate total width for centering (using actual icon sizes if provided)
+    local totalWidth = 0
+    if iconSizes and #iconSizes > 0 then
+        -- Use actual sizes for accurate centering
+        for i = 1, countForCentering do
+            totalWidth = totalWidth + (iconSizes[i] or baseSize)
+        end
+        totalWidth = totalWidth + (spacing * (countForCentering - 1))
+    else
+        -- Fallback to base size for all icons
+        totalWidth = (baseSize * countForCentering) + (spacing * (countForCentering - 1))
+    end
+
+    for i = 1, framesToPosition do
+        local iconFrame = frames[i]
+        if not iconFrame then break end
+
+        local iconSize = (iconSizes and iconSizes[i]) or baseSize
+        iconFrame:ClearAllPoints()
+
+        if i == 1 then
+            -- First icon - attach to the nameplate anchor
+            if anchorConfig.anchor == "TOP" or anchorConfig.anchor == "BOTTOM" then
+                -- Center based on total width of visible icons
+                local offsetX = -totalWidth / 2 + (iconSizes and iconSizes[1] or baseSize) / 2 + anchorConfig.x
+
+                if anchorConfig.anchor == "TOP" then
+                    iconFrame:SetPoint("BOTTOM", anchor, "TOP", offsetX, anchorConfig.y)
+                else -- BOTTOM
+                    iconFrame:SetPoint("TOP", anchor, "BOTTOM", offsetX, anchorConfig.y)
+                end
+            elseif anchorConfig.anchor == "RIGHT" then
+                iconFrame:SetPoint("LEFT", anchor, "RIGHT", anchorConfig.x, anchorConfig.y)
+            elseif anchorConfig.anchor == "LEFT" then
+                iconFrame:SetPoint("RIGHT", anchor, "LEFT", anchorConfig.x, anchorConfig.y)
+            end
+        else
+            -- Subsequent icons - attach to previous icon
+            local prevFrame = frames[i - 1]
+
+            if anchorConfig.anchor == "RIGHT" then
+                iconFrame:SetPoint("LEFT", prevFrame, "RIGHT", spacing, 0)
+            elseif anchorConfig.anchor == "LEFT" then
+                iconFrame:SetPoint("RIGHT", prevFrame, "LEFT", -spacing, 0)
+            elseif anchorConfig.anchor == "TOP" then
+                iconFrame:SetPoint("BOTTOMLEFT", prevFrame, "BOTTOMRIGHT", spacing, 0)
+            elseif anchorConfig.anchor == "BOTTOM" then
+                iconFrame:SetPoint("TOPLEFT", prevFrame, "TOPRIGHT", spacing, 0)
+            end
+        end
+
+        iconFrame:SetSize(iconSize, iconSize)
+    end
 end
 
 function BigDebuffs:NAME_PLATE_UNIT_ADDED(_, unit)
@@ -2034,49 +2244,69 @@ function BigDebuffs:NAME_PLATE_UNIT_ADDED(_, unit)
 
     if not frame or not anchor then return end
 
-    if not frame.BigDebuffs then
-        frame.BigDebuffs = CreateFrame("Button", "$parent.BigDebuffs", frame)
-        frame.BigDebuffs:SetFrameLevel(frame:GetFrameLevel())
+    local config = self.db.profile.nameplates
+    local maxIcons = config.maxIcons or 1
 
-        frame.BigDebuffs.icon = frame.BigDebuffs:CreateTexture("$parent.Icon", "OVERLAY", nil, 3)
-        frame.BigDebuffs.icon:SetAllPoints(frame.BigDebuffs)
-
-        frame.BigDebuffs.cooldown = CreateFrame("Frame", "$parent.Cooldown", frame.BigDebuffs, "CooldownTemplate")
-        frame.BigDebuffs.cooldown:SetAllPoints(frame.BigDebuffs)
-        frame.BigDebuffs.cooldown:SetDrawEdge(false)
-        frame.BigDebuffs.cooldown:SetAlpha(1)
-        frame.BigDebuffs.cooldown:SetDrawBling(false)
-        frame.BigDebuffs.cooldown:SetDrawSwipe(true)
-        frame.BigDebuffs.cooldown:SetReverse(true)
-
-        frame.BigDebuffs.cooldown:SetHideCountdownNumbers(not (OmniCC == nil and self.db.profile.nameplates.cooldownCount))
-        frame.BigDebuffs.cooldown.noCooldownCount = not self.db.profile.nameplates.cooldownCount
-
-        frame.BigDebuffs:SetScript("OnEnter", function(self)
-            if BigDebuffs.db.profile.nameplates.tooltips then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 0, 0)
-                if self.interrupt then
-                    GameTooltip:SetSpellByID(self.interrupt)
-                elseif self.buff then
-                    GameTooltip:SetUnitBuff(self.unit, self:GetID())
-                else
-                    GameTooltip:SetUnitDebuff(self.unit, self:GetID())
-                end
-            elseif GameTooltip:IsOwned(self) then
-                GameTooltip:Hide()
-            end
-        end)
-
-        frame.BigDebuffs:SetScript("OnLeave", function()
-            GameTooltip:Hide()
-        end)
+    -- Create or get the frames table for this unit
+    if not frame.BigDebuffs or type(frame.BigDebuffs) ~= "table" or not frame.BigDebuffs[1] then
+        frame.BigDebuffs = {}
     end
 
-    frame.BigDebuffs.anchor = anchor
+    -- Always create up to MAX_NAMEPLATE_ICONS frames so we can adjust maxIcons dynamically
+    for i = 1, BigDebuffs.MAX_NAMEPLATE_ICONS do
+        if not frame.BigDebuffs[i] then
+            local iconFrame = CreateFrame("Button", "$parent.BigDebuffs"..i, frame)
+            iconFrame:SetFrameLevel(frame:GetFrameLevel())
+
+            iconFrame.icon = iconFrame:CreateTexture("$parent.Icon", "OVERLAY", nil, 3)
+            iconFrame.icon:SetAllPoints(iconFrame)
+
+            iconFrame.cooldown = CreateFrame("Frame", "$parent.Cooldown", iconFrame, "CooldownTemplate")
+            iconFrame.cooldown:SetAllPoints(iconFrame)
+            iconFrame.cooldown:SetDrawEdge(false)
+            iconFrame.cooldown:SetAlpha(1)
+            iconFrame.cooldown:SetDrawBling(false)
+            iconFrame.cooldown:SetDrawSwipe(true)
+            iconFrame.cooldown:SetReverse(true)
+
+            iconFrame.cooldown:SetHideCountdownNumbers(not (OmniCC == nil and self.db.profile.nameplates.cooldownCount))
+            iconFrame.cooldown.noCooldownCount = not self.db.profile.nameplates.cooldownCount
+
+            iconFrame:SetScript("OnEnter", function(self)
+                if BigDebuffs.db.profile.nameplates.tooltips then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 0, 0)
+                    if self.interrupt then
+                        GameTooltip:SetSpellByID(self.interrupt)
+                    elseif self.buff then
+                        GameTooltip:SetUnitBuff(self.unit, self:GetID())
+                    else
+                        GameTooltip:SetUnitDebuff(self.unit, self:GetID())
+                    end
+                elseif GameTooltip:IsOwned(self) then
+                    GameTooltip:Hide()
+                end
+            end)
+
+            iconFrame:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+
+            iconFrame.anchor = anchor
+            iconFrame.unit = unit
+
+            frame.BigDebuffs[i] = iconFrame
+        else
+            -- Update existing frame
+            local iconFrame = frame.BigDebuffs[i]
+            iconFrame.unit = unit
+            iconFrame.anchor = anchor
+        end
+    end
+
+    -- Position all icons (initially we don't know visible count, so use maxIcons for both)
+    self:RepositionNameplateIcons(frame.BigDebuffs, anchor, unit, maxIcons, maxIcons)
 
     self.Nameplates[unit] = frame.BigDebuffs
-
-    frame.BigDebuffs.unit = unit
 
     self:UpdateNameplate(unit)
 
@@ -2084,17 +2314,20 @@ function BigDebuffs:NAME_PLATE_UNIT_ADDED(_, unit)
 end
 
 function BigDebuffs:NAME_PLATE_UNIT_REMOVED(_, unit)
-    local frame = self.Nameplates[unit]
+    local frames = self.Nameplates[unit]
 
     -- Seems like a good idea to remove old nameplate frames from the group.
     if Masque ~= nil then
-        BigDebuffs.MasqueGroup.NamePlate:RemoveButton(frame)
-        RestoreIconLayout(frame)
+        for i = 1, #frames do
+            BigDebuffs.MasqueGroup.NamePlate:RemoveButton(frames[i])
+            RestoreIconLayout(frames[i])
+        end
     end
 
     for i = 1, #unitsWithRaid do
         if (unitsWithRaid[i] == unit) then
             table.remove(unitsWithRaid, i)
+            break
         end
     end
 end

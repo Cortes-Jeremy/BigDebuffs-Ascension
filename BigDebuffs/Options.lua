@@ -1490,6 +1490,33 @@ function BigDebuffs:SetupOptions()
                         },
                         order = 5,
                     },
+                    maxIcons = {
+                        type = "range",
+                        name = "Maximum Icons",
+                        desc = "How many debuff/buff icons can appear side-by-side on a single nameplate. Icons are sorted by priority - only the most important ones are shown when this limit is reached.",
+                        width = "normal",
+                        min = 1,
+                        max = 5, -- BigDebuffs.MAX_NAMEPLATE_ICONS
+                        step = 1,
+                        order = 6.1,
+                    },
+                    iconSpacing = {
+                        type = "range",
+                        name = "Icon Spacing",
+                        desc = "Horizontal gap between icons when multiple icons are displayed. Set to 0 for no spacing, or increase for better visual separation.",
+                        width = "normal",
+                        min = 0,
+                        max = 10,
+                        step = 1,
+                        order = 6.2,
+                    },
+                    useRaidFrameSize = {
+                        type = "toggle",
+                        name = "Dynamic Icon Sizes",
+                        desc = "Adjust icon sizes based on spell priority categories (CC, Interrupts, Roots, etc.) using the same percentages as Raid Frames. Your base icon size corresponds to 50% - spells above 50% will be larger, below 50% will be smaller.",
+                        width = "normal",
+                        order = 6.3,
+                    },
 					spells = {
                         order = 7,
                         name = L["Spells"],
