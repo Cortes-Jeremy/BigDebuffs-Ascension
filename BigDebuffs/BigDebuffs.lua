@@ -2315,6 +2315,7 @@ end
 
 function BigDebuffs:NAME_PLATE_UNIT_REMOVED(_, unit)
     local frames = self.Nameplates[unit]
+    if not frames then return end
 
     -- Seems like a good idea to remove old nameplate frames from the group.
     if Masque ~= nil then
